@@ -29,18 +29,6 @@ int main(int argc, char *argv[])
 	if (argc != 4)
 		errx(EXIT_FAILURE, "please specify 3 numbers");
 
-	/*struct rlimit rl_st;
-	getrlimit(RLIMIT_STACK, &rl_st);
-	printf("rl_st soft cur : %ld KB\nrl_st hard cur : %ld KB\n",
-	       rl_st.rlim_cur / 1024, rl_st.rlim_max / 1024);
-
-	rl_st.rlim_cur = rl_st.rlim_cur + (1024 * 1024);
-	setrlimit(RLIMIT_STACK, &rl_st);
-
-	getrlimit(RLIMIT_STACK, &rl_st);
-	printf("rl_st soft cur : %ld KB\nrl_st hard cur : %ld KB\n",
-	       rl_st.rlim_cur / 1024, rl_st.rlim_max / 1024);*/
-
 	/* Initialisation et activation d’attributs */
 	pthread_attr_init(&attr); //valeur par défaut
 
