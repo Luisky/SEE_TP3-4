@@ -10,6 +10,7 @@
 #include <unistd.h>
 #include <sys/types.h>
 #include <string.h> /* memcpy */
+#include <aio.h>
 
 #define NB_WORKERS 4
 #define V_LENGTH 400

@@ -29,7 +29,6 @@ struct thread_data {
 	int		 thread_id;
 };
 
-pthread_mutex_t mut;
 pthread_mutex_t mut_cond;
 pthread_cond_t	cond;
 
@@ -39,21 +38,15 @@ void *worker_thread(void *arg)
 
 	int start = data->thread_id * SLICE;
 	for (int i = start; i < start + SLICE; i++) {
-		pthread_mutex_lock(&mut);
-
 		data->vec_data->v3[i] =
 			data->vec_data->v1[i] * data->vec_data->v2[i];
-		data->vec_data->res +=
-			data->vec_data->v3[i]; //could be done in another thread
 
 		pthread_mutex_lock(&mut_cond);
-
 		data->vec_data->p_count++;
 		if (data->vec_data->p_count == V_LENGTH)
 			pthread_cond_signal(&cond);
 
 		pthread_mutex_unlock(&mut_cond);
-		pthread_mutex_unlock(&mut);
 	}
 
 	pthread_exit(NULL);
@@ -69,7 +62,11 @@ void *printer_thread(void *arg)
 		pthread_cond_wait(&cond, &mut_cond);
 
 	pthread_mutex_unlock(&mut_cond);
-	printf("resultat produit scalaire : %lf\n", data->res);
+
+	for (int i = 0; i < V_LENGTH; i++)
+		data->res += data->v3[i];
+
+	printf("---\ndata->res : %lf\n---\n", data->res);
 
 	pthread_exit(NULL);
 }
@@ -81,9 +78,7 @@ int main(int argc, char *argv[])
 
 	pthread_attr_t attr;
 
-	pthread_mutex_init(&mut, NULL);
 	pthread_mutex_init(&mut_cond, NULL);
-
 	pthread_cond_init(&cond, NULL);
 
 	void *status;
@@ -126,13 +121,13 @@ int main(int argc, char *argv[])
 
 	// thread_creation
 	for (int i = 0; i < NB_WORKERS; i++) {
-		printf("Creation du thread %d\n", i);
+		printf("pthread_create : id = %d\n", i);
 		if (pthread_create(&worker_threads[i], &attr, worker_thread,
 				   &thread_data_workers[i]))
 			errx(EXIT_FAILURE, "pthread_create");
 	}
 
-	printf("Creation du thread de print\n");
+	printf("pthread_create : id = print\n");
 	if (pthread_create(&print_thread, &attr, printer_thread, mm_addr))
 		errx(EXIT_FAILURE, "pthread_create");
 
@@ -141,15 +136,12 @@ int main(int argc, char *argv[])
 	for (int i = 0; i < NB_WORKERS; i++) {
 		if (pthread_join(worker_threads[i], &status))
 			errx(EXIT_FAILURE, "pthread_join");
-		printf("le join a fini avec le thread %d et a donne le status= %ld\n",
-		       i, (long)status);
+		printf("pthread_join : %d status = %ld\n", i, (long)status);
 	}
 	if (pthread_join(print_thread, &status))
 		errx(EXIT_FAILURE, "pthread_join");
-	printf("le join a fini avec le thread print et a donne le status= %ld\n",
-	       (long)status);
+	printf("pthread_join : print status = %ld\n", (long)status);
 
-	pthread_mutex_destroy(&mut);
 	pthread_mutex_destroy(&mut_cond);
 	pthread_cond_destroy(&cond);
 
