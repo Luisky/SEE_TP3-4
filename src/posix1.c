@@ -23,8 +23,8 @@ int main(int argc, char *argv[])
 {
 	pthread_t      thread[NB_THREADS];
 	pthread_attr_t attr;
-	int	    rc, t;
-	void *	 status;
+	int	       rc, t;
+	void *	       status;
 
 	if (argc != 4)
 		errx(EXIT_FAILURE, "please specify 3 numbers");

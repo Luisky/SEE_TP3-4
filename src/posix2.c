@@ -89,7 +89,7 @@ int main(int argc, char *argv[])
 	size_t shm_size;
 	void * mm_addr = NULL;
 
-	if ((fd = shm_open(SHM_NAME, O_RDWR | O_CREAT, 0644)) == -1)
+	if ((fd = shm_open(SHM_NAME, O_RDWR | O_CREAT, 0600)) == -1)
 		errx(EXIT_FAILURE, "shm_open");
 
 	shm_size = sizeof(struct vec_data) / sysconf(_SC_PAGE_SIZE);

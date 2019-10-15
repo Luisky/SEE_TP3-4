@@ -11,27 +11,32 @@
 #include <sys/types.h>
 #include <string.h> /* memcpy */
 #include <mqueue.h>
+#include <stdbool.h>
+#include <stdint.h>
 
 #define NB_WORKERS 4
 #define V_LENGTH 400
 #define SLICE (V_LENGTH / NB_WORKERS)
 #define MQ_NAME "/mq"
+#define MSG_PRIO 1
 
+//super utile : https://www.blaess.fr/christophe/2011/09/17/efficacite-des-ipc-les-files-de-messages-posix/
 struct vec_data {
 	double v1[V_LENGTH];
 	double v2[V_LENGTH];
 	double v3[V_LENGTH];
 	double res;
-	int    p_count;
-
-	pthread_mutex_t *mut_cond;
-	pthread_cond_t * cond;
 };
 
 struct thread_data {
 	struct vec_data *vec_data;
 	int		 thread_id;
 };
+
+//mq
+mqd_t mq_test;
+char *buffer_msg  = NULL;
+int   mq_buf_size = 0;
 
 void *worker_thread(void *arg)
 {
@@ -41,14 +46,13 @@ void *worker_thread(void *arg)
 	for (int i = start; i < start + SLICE; i++) {
 		data->vec_data->v3[i] =
 			data->vec_data->v1[i] * data->vec_data->v2[i];
-
-		pthread_mutex_lock(data->vec_data->mut_cond);
-		data->vec_data->p_count++;
-		if (data->vec_data->p_count == V_LENGTH)
-			pthread_cond_signal(data->vec_data->cond);
-
-		pthread_mutex_unlock(data->vec_data->mut_cond);
 	}
+
+	printf("done");
+
+	uint8_t msg = 1;
+	if (mq_send(mq_test, (char *)&msg, sizeof(msg), MSG_PRIO) == -1)
+		perror("mq_send");
 
 	pthread_exit(NULL);
 }
@@ -57,12 +61,18 @@ void *printer_thread(void *arg)
 {
 	struct vec_data *data = (struct vec_data *)arg;
 
-	pthread_mutex_lock(data->mut_cond); // we'll unlock it later
+	uint8_t stop_cond = 0;
 
-	while (data->p_count != V_LENGTH) // because of spurios wakeup
-		pthread_cond_wait(data->cond, data->mut_cond);
+	while (true) {
+		if (mq_receive(mq_test, buffer_msg, mq_buf_size, NULL) == -1) {
+			perror("mq_receive");
+			pthread_exit(NULL);
+		}
 
-	pthread_mutex_unlock(data->mut_cond);
+		stop_cond += buffer_msg[0];
+		if (stop_cond == 4)
+			break;
+	}
 
 	for (int i = 0; i < V_LENGTH; i++)
 		data->res += data->v3[i];
@@ -77,17 +87,30 @@ int main(int argc, char *argv[])
 	pthread_t worker_threads[NB_WORKERS];
 	pthread_t print_thread;
 
-	pthread_attr_t	attr;
-	pthread_mutex_t mut_cond;
-	pthread_cond_t	cond;
-
-	pthread_mutex_init(&mut_cond, NULL);
-	pthread_cond_init(&cond, NULL);
+	pthread_attr_t attr;
+	struct mq_attr mq_test_attr;
 
 	void *status;
-	mqd_t mq_test;
-	if ((mq_test = mq_open(MQ_NAME, O_RDWR | O_CREAT)) == -1)
-		errx(EXIT_FAILURE, "mq_open");
+
+	if ((mq_test = mq_open(MQ_NAME, O_RDWR | O_CREAT, 0600, NULL)) == -1) {
+		perror("mq_open");
+		exit(EXIT_FAILURE);
+	}
+
+	if (mq_getattr(mq_test, &mq_test_attr) != 0) {
+		perror("mq_getattr");
+		exit(EXIT_FAILURE);
+	}
+
+	mq_buf_size = mq_test_attr.mq_msgsize;
+
+	printf("mq_buf_size : %d\n", mq_buf_size);
+
+	buffer_msg = malloc(mq_buf_size);
+	if (buffer_msg == NULL) {
+		perror("malloc");
+		exit(EXIT_FAILURE);
+	}
 
 	struct vec_data vec_data;
 	for (int i = 0; i < V_LENGTH; i++) {
@@ -95,10 +118,7 @@ int main(int argc, char *argv[])
 		vec_data.v2[i] = 1.0;
 		vec_data.v3[i] = 0.0;
 	}
-	vec_data.res	  = 0.0;
-	vec_data.p_count  = 0;
-	vec_data.mut_cond = &mut_cond;
-	vec_data.cond	  = &cond;
+	vec_data.res = 0.0;
 
 	struct thread_data thread_data_workers[NB_WORKERS];
 	for (int i = 0; i < NB_WORKERS; i++) {
@@ -129,10 +149,9 @@ int main(int argc, char *argv[])
 		errx(EXIT_FAILURE, "pthread_join");
 	printf("pthread_join : print status = %ld\n", (long)status);
 
-	pthread_mutex_destroy(&mut_cond);
-	pthread_cond_destroy(&cond);
-
-	// TODO: clean mq
+	// cleaning up mq
+	mq_close(mq_test);
+	mq_unlink(MQ_NAME);
 
 	pthread_exit(NULL);
 }
