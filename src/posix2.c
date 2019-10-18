@@ -71,7 +71,7 @@ void *printer_thread(void *arg)
 	pthread_exit(NULL);
 }
 
-int main(int argc, char *argv[])
+int main(int argc, char **argv)
 {
 	pthread_t worker_threads[NB_WORKERS];
 	pthread_t print_thread;

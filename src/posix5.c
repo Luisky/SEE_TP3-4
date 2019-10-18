@@ -1,31 +1,22 @@
 #define _GNU_SOURCE
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/resource.h>
-#include <err.h>
-#include <sys/mman.h>
-#include <sys/stat.h> /* For mode constants */
-#include <fcntl.h> /* For O_* constants */
-#include <unistd.h>
-#include <sys/types.h>
-#include <string.h> /* memcpy */
+#include "posix_helper.h"
 
-#define NB_WORKERS 4
+#define NB_WORKERS 2
 #define V_LENGTH 400
 #define SLICE (V_LENGTH / NB_WORKERS)
+#define MQ_NAME "/mq"
+#define MSG_PRIO 1
 
-// TODO: remove errx of files when perror is need (replace it by macro)
-
+//super utile : https://www.blaess.fr/christophe/2011/09/17/efficacite-des-ipc-les-files-de-messages-posix/
 struct vec_data {
 	double v1[V_LENGTH];
 	double v2[V_LENGTH];
-	double v3[V_LENGTH];
 	double res;
-	int    p_count;
 
-	pthread_mutex_t *mut_cond;
-	pthread_cond_t * cond;
+	//mq
+	mqd_t mq;
+	char *mq_buf_msg;
+	int   mq_buf_size;
 };
 
 struct thread_data {
@@ -33,22 +24,29 @@ struct thread_data {
 	int		 thread_id;
 };
 
+static void handler(int sig, siginfo_t *si, void *uc)
+{
+	if (si->si_value.sival_int == SYS_READ)
+		puts("aio_read finished");
+	else if (si->si_value.sival_int == SYS_WRITE)
+		puts("aio_write finished");
+	else
+		puts("unspecified aio finished");
+}
+
 void *worker_thread(void *arg)
 {
 	struct thread_data *data = (struct thread_data *)arg;
 
+	double local_res = 0.0;
+
 	int start = data->thread_id * SLICE;
-	for (int i = start; i < start + SLICE; i++) {
-		data->vec_data->v3[i] =
-			data->vec_data->v1[i] * data->vec_data->v2[i];
+	for (int i = start; i < start + SLICE; i++)
+		local_res += data->vec_data->v1[i] * data->vec_data->v2[i];
 
-		pthread_mutex_lock(data->vec_data->mut_cond);
-		data->vec_data->p_count++;
-		if (data->vec_data->p_count == V_LENGTH)
-			pthread_cond_signal(data->vec_data->cond);
-
-		pthread_mutex_unlock(data->vec_data->mut_cond);
-	}
+	if (mq_send(data->vec_data->mq, (char *)&local_res, sizeof(local_res),
+		    MSG_PRIO) == -1)
+		perror("mq_send");
 
 	pthread_exit(NULL);
 }
@@ -57,45 +55,55 @@ void *printer_thread(void *arg)
 {
 	struct vec_data *data = (struct vec_data *)arg;
 
-	pthread_mutex_lock(data->mut_cond); // we'll unlock it later
+	int stop_cond = 0;
 
-	while (data->p_count != V_LENGTH) // because of spurios wakeup
-		pthread_cond_wait(data->cond, data->mut_cond);
+	while (true) {
+		if (mq_receive(data->mq, data->mq_buf_msg, data->mq_buf_size,
+			       NULL) == -1) {
+			perror("mq_receive");
+			goto p_exit;
+		}
 
-	pthread_mutex_unlock(data->mut_cond);
+		data->res += *(double *)data->mq_buf_msg;
 
-	for (int i = 0; i < V_LENGTH; i++)
-		data->res += data->v3[i];
+		// could have written on one line if (++stop == 4) but it's not as readable
+		stop_cond++;
+		if (stop_cond == NB_WORKERS)
+			break;
+	}
 
 	printf("---\ndata->res : %lf\n---\n", data->res);
-
+p_exit:
 	pthread_exit(NULL);
 }
 
 int main(int argc, char *argv[])
 {
+	if (argc != 3)
+		errx(EXIT_FAILURE, "Usage: %s {filename1} {filename2}\n",
+		     argv[0]);
+
 	pthread_t worker_threads[NB_WORKERS];
 	pthread_t print_thread;
 
-	pthread_attr_t	attr;
-	pthread_mutex_t mut_cond;
-	pthread_cond_t	cond;
-
-	pthread_mutex_init(&mut_cond, NULL);
-	pthread_cond_init(&cond, NULL);
+	pthread_attr_t attr;
+	struct mq_attr mq_attr;
 
 	void *status;
 
 	struct vec_data vec_data;
-	for (int i = 0; i < V_LENGTH; i++) {
-		vec_data.v1[i] = 1.0;
-		vec_data.v2[i] = 1.0;
-		vec_data.v3[i] = 0.0;
-	}
-	vec_data.res	  = 0.0;
-	vec_data.p_count  = 0;
-	vec_data.mut_cond = &mut_cond;
-	vec_data.cond	  = &cond;
+	vec_data.res = 0.0;
+	if ((vec_data.mq = mq_open(MQ_NAME, O_RDWR | O_CREAT, 0600, NULL)) ==
+	    -1)
+		perr_exit("mq_open");
+
+	if (mq_getattr(vec_data.mq, &mq_attr) != 0)
+		perr_exit("mq_getattr");
+
+	vec_data.mq_buf_size = mq_attr.mq_msgsize;
+	vec_data.mq_buf_msg  = malloc(vec_data.mq_buf_size);
+	if (vec_data.mq_buf_msg == NULL)
+		perr_exit("malloc");
 
 	struct thread_data thread_data_workers[NB_WORKERS];
 	for (int i = 0; i < NB_WORKERS; i++) {
@@ -103,31 +111,97 @@ int main(int argc, char *argv[])
 		thread_data_workers[i].vec_data	 = &vec_data;
 	}
 
+	int fd_vec1, fd_vec2;
+	//Ouverture du fichier (spécifié en argument) sur lequel l’E/S va être effectuée
+	if ((fd_vec1 = open(argv[1], O_RDWR, 0600)) == -1)
+		perr_exit("open");
+
+	if ((fd_vec2 = open(argv[2], O_RDWR, 0600)) == -1)
+		perr_exit("open");
+
+	// BEGIN SIGACTION
+	struct sigaction sa;
+	sa.sa_flags	= SA_SIGINFO;
+	sa.sa_sigaction = handler;
+	sigemptyset(&sa.sa_mask);
+	if (sigaction(SIGRTMIN, &sa, NULL) == -1)
+		perr_exit("sigaction");
+	// END SIGACTION
+
+	// BEGIN AIO
+	struct aiocb cb_vec0, cb_vec1, cb_vec2, cb_vec3;
+	size_t	     nb_bytes_aio = SLICE * sizeof(double);
+
+	const struct aiocb *cbs[4];
+
+	// thought it was nb_bytes_aio + 1 for vec1 and vec3 but no :(
+	aiocb_init(&cb_vec0, fd_vec1, nb_bytes_aio, 0, SYS_READ);
+	aiocb_init(&cb_vec1, fd_vec1, nb_bytes_aio, nb_bytes_aio, SYS_READ);
+	aiocb_init(&cb_vec2, fd_vec2, nb_bytes_aio, 0, SYS_READ);
+	aiocb_init(&cb_vec3, fd_vec2, nb_bytes_aio, nb_bytes_aio, SYS_READ);
+
+	cbs[0] = &cb_vec0;
+	cbs[1] = &cb_vec1;
+	cbs[2] = &cb_vec3;
+	cbs[3] = &cb_vec3;
+
+	if (aio_read(&cb_vec0) == -1)
+		perr_exit("aio_read");
+	if (aio_read(&cb_vec1) == -1)
+		perr_exit("aio_read");
+	if (aio_read(&cb_vec2) == -1)
+		perr_exit("aio_read");
+	if (aio_read(&cb_vec3) == -1)
+		perr_exit("aio_read");
+
+	aio_suspend(cbs, 4, NULL);
+
+	int ret;
+	if ((ret = aio_return(&cb_vec0)) == -1)
+		perr_exit("aio_return");
+	if ((ret = aio_return(&cb_vec1)) == -1)
+		perr_exit("aio_return");
+	if ((ret = aio_return(&cb_vec2)) == -1)
+		perr_exit("aio_return");
+	if ((ret = aio_return(&cb_vec3)) == -1)
+		perr_exit("aio_return");
+
+	memcpy((char *)vec_data.v1, (char *)cb_vec0.aio_buf, nb_bytes_aio);
+	memcpy(&((char *)vec_data.v1)[nb_bytes_aio], (char *)cb_vec1.aio_buf,
+	       nb_bytes_aio);
+	memcpy((char *)vec_data.v2, (char *)cb_vec2.aio_buf, nb_bytes_aio);
+	memcpy(&((char *)vec_data.v2)[nb_bytes_aio], (char *)cb_vec3.aio_buf,
+	       nb_bytes_aio);
+	// END AIO
+
 	// thread_creation
 	for (int i = 0; i < NB_WORKERS; i++) {
 		printf("pthread_create : id = %d\n", i);
 		if (pthread_create(&worker_threads[i], &attr, worker_thread,
 				   &thread_data_workers[i]))
-			errx(EXIT_FAILURE, "pthread_create");
+			perr_exit("pthread_create");
 	}
 
 	printf("pthread_create : id = print\n");
 	if (pthread_create(&print_thread, &attr, printer_thread, &vec_data))
-		errx(EXIT_FAILURE, "pthread_create");
+		perr_exit("pthread_create");
 
 	/* liberation des attributs et attente de la terminaison des threads */
 	pthread_attr_destroy(&attr);
 	for (int i = 0; i < NB_WORKERS; i++) {
 		if (pthread_join(worker_threads[i], &status))
-			errx(EXIT_FAILURE, "pthread_join");
+			perr_exit("pthread_join");
 		printf("pthread_join : %d status = %ld\n", i, (long)status);
 	}
 	if (pthread_join(print_thread, &status))
-		errx(EXIT_FAILURE, "pthread_join");
+		perr_exit("pthread_join");
 	printf("pthread_join : print status = %ld\n", (long)status);
 
-	pthread_mutex_destroy(&mut_cond);
-	pthread_cond_destroy(&cond);
+	// cleaning up mq
+	mq_close(vec_data.mq);
+	mq_unlink(MQ_NAME);
+
+	//TODO: free malloc in aiocb_init
 
 	pthread_exit(NULL);
 }
