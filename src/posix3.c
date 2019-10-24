@@ -1,18 +1,4 @@
-#define _GNU_SOURCE
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/resource.h>
-#include <err.h>
-#include <sys/mman.h>
-#include <sys/stat.h> /* For mode constants */
-#include <fcntl.h> /* For O_* constants */
-#include <unistd.h>
-#include <sys/types.h>
-#include <string.h> /* memcpy */
-#include <mqueue.h>
-#include <stdbool.h>
-#include <stdint.h>
+#include "posix_helper.h"
 
 #define NB_WORKERS 4
 #define V_LENGTH 400
@@ -26,17 +12,17 @@ struct vec_data {
 	double v2[V_LENGTH];
 	double v3[V_LENGTH];
 	double res;
+
+	//mq
+	mqd_t mq;
+	char *mq_buf_msg;
+	int   mq_buf_size;
 };
 
 struct thread_data {
 	struct vec_data *vec_data;
 	int		 thread_id;
 };
-
-//mq
-mqd_t mq_test;
-char *buffer_msg  = NULL;
-int   mq_buf_size = 0;
 
 void *worker_thread(void *arg)
 {
@@ -49,7 +35,8 @@ void *worker_thread(void *arg)
 	}
 
 	uint8_t msg = 1;
-	if (mq_send(mq_test, (char *)&msg, sizeof(msg), MSG_PRIO) == -1)
+	if (mq_send(data->vec_data->mq, (char *)&msg, sizeof(msg), MSG_PRIO) ==
+	    -1)
 		perror("mq_send");
 
 	pthread_exit(NULL);
@@ -62,12 +49,13 @@ void *printer_thread(void *arg)
 	uint8_t stop_cond = 0;
 
 	while (true) {
-		if (mq_receive(mq_test, buffer_msg, mq_buf_size, NULL) == -1) {
+		if (mq_receive(data->mq, data->mq_buf_msg, data->mq_buf_size,
+			       NULL) == -1) {
 			perror("mq_receive");
-			pthread_exit(NULL);
+			goto p_exit;
 		}
 
-		stop_cond += buffer_msg[0];
+		stop_cond += data->mq_buf_msg[0];
 		if (stop_cond == 4)
 			break;
 	}
@@ -76,7 +64,7 @@ void *printer_thread(void *arg)
 		data->res += data->v3[i];
 
 	printf("---\ndata->res : %lf\n---\n", data->res);
-
+p_exit:
 	pthread_exit(NULL);
 }
 
@@ -86,29 +74,9 @@ int main(int argc, char *argv[])
 	pthread_t print_thread;
 
 	pthread_attr_t attr;
-	struct mq_attr mq_test_attr;
+	struct mq_attr mq_attr;
 
 	void *status;
-
-	if ((mq_test = mq_open(MQ_NAME, O_RDWR | O_CREAT, 0600, NULL)) == -1) {
-		perror("mq_open");
-		exit(EXIT_FAILURE);
-	}
-
-	if (mq_getattr(mq_test, &mq_test_attr) != 0) {
-		perror("mq_getattr");
-		exit(EXIT_FAILURE);
-	}
-
-	mq_buf_size = mq_test_attr.mq_msgsize;
-
-	printf("mq_buf_size : %d\n", mq_buf_size);
-
-	buffer_msg = malloc(mq_buf_size);
-	if (buffer_msg == NULL) {
-		perror("malloc");
-		exit(EXIT_FAILURE);
-	}
 
 	struct vec_data vec_data;
 	for (int i = 0; i < V_LENGTH; i++) {
@@ -117,6 +85,18 @@ int main(int argc, char *argv[])
 		vec_data.v3[i] = 0.0;
 	}
 	vec_data.res = 0.0;
+
+	if ((vec_data.mq = mq_open(MQ_NAME, O_RDWR | O_CREAT, 0600, NULL)) ==
+	    -1)
+		perr_exit("mq_open");
+
+	if (mq_getattr(vec_data.mq, &mq_attr) != 0)
+		perr_exit("mq_getattr");
+
+	vec_data.mq_buf_size = mq_attr.mq_msgsize;
+	vec_data.mq_buf_msg  = malloc(vec_data.mq_buf_size);
+	if (vec_data.mq_buf_msg == NULL)
+		perr_exit("malloc");
 
 	struct thread_data thread_data_workers[NB_WORKERS];
 	for (int i = 0; i < NB_WORKERS; i++) {
@@ -148,8 +128,8 @@ int main(int argc, char *argv[])
 	printf("pthread_join : print status = %ld\n", (long)status);
 
 	// cleaning up mq
-	mq_close(mq_test);
+	mq_close(vec_data.mq);
 	mq_unlink(MQ_NAME);
 
-	pthread_exit(NULL);
+	return EXIT_SUCCESS;
 }

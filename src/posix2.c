@@ -1,15 +1,4 @@
-#define _GNU_SOURCE
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/resource.h>
-#include <err.h>
-#include <sys/mman.h>
-#include <sys/stat.h> /* For mode constants */
-#include <fcntl.h> /* For O_* constants */
-#include <unistd.h>
-#include <sys/types.h>
-#include <string.h> /* memcpy */
+#include "posix_helper.h"
 
 #define NB_WORKERS 4
 #define V_LENGTH 400
@@ -154,5 +143,5 @@ int main(int argc, char **argv)
 	shm_unlink(SHM_NAME);
 	munmap(mm_addr, shm_size);
 
-	pthread_exit(NULL);
+	return EXIT_SUCCESS;
 }

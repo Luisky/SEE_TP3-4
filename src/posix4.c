@@ -15,20 +15,16 @@ static void handler(int sig, siginfo_t *si, void *uc)
 
 int main(int argc, char *argv[])
 {
-	if (argc != 3)
-		errx(EXIT_FAILURE, "Usage: %s {filename1} {filename2}\n",
-		     argv[0]);
+	if (argc != 2)
+		errx(EXIT_FAILURE, "Usage: %s {filename}\n", argv[0]);
 
-	int fd1, fd2;
+	int fd;
 
 	struct aiocb cbr1, cbr2, cbw; // bloc de contrôle de l’E/S asynchrone
 	const struct aiocb *cbs[3];
 
 	//Ouverture du fichier (spécifié en argument) sur lequel l’E/S va être effectuée
-	if ((fd1 = open(argv[1], O_RDWR, 0600)) == -1)
-		perr_exit("open");
-
-	if ((fd2 = open(argv[2], O_RDWR, 0600)) == -1)
+	if ((fd = open(argv[1], O_RDWR, 0600)) == -1)
 		perr_exit("open");
 
 	// setting up signal handling
@@ -39,12 +35,12 @@ int main(int argc, char *argv[])
 	if (sigaction(SIGRTMIN, &sa, NULL) == -1)
 		perr_exit("sigaction");
 
-	aiocb_init(&cbr1, fd1, BUF_SIZE, 0, SYS_READ);
-	aiocb_init(&cbr2, fd1, BUF_SIZE, 0, SYS_READ);
+	aiocb_init(&cbr1, fd, BUF_SIZE, 0, SYS_READ);
+	aiocb_init(&cbr2, fd, BUF_SIZE, 0, SYS_READ);
 
 	char * msg_to_write = "GREETINGS_FRIENDS\n";
 	size_t mtw_len	    = strlen(msg_to_write);
-	aiocb_init(&cbw, fd1, mtw_len, 0, SYS_WRITE);
+	aiocb_init(&cbw, fd, mtw_len, 0, SYS_WRITE);
 	memcpy((char *)cbw.aio_buf, msg_to_write, mtw_len);
 
 	cbs[0] = &cbr1;
@@ -62,7 +58,10 @@ int main(int argc, char *argv[])
 		perr_exit("aio_read");
 
 	//Suspension du processus dans l’attente de la terminaison de la lecture
-	aio_suspend(cbs, 3, NULL);
+	//aio_suspend(cbs, 3, NULL);
+
+	if (lio_listio(LIO_WAIT, (struct aiocb *const *)cbs, 3, NULL))
+		perr_exit("lio_listio");
 
 	int ret;
 	if ((ret = aio_return(&cbr1)) == -1)
@@ -90,8 +89,7 @@ int main(int argc, char *argv[])
 	// cleanup the malloc
 	//free(cbr1.aio_buf);
 
-	close(fd1);
-	close(fd2);
+	close(fd);
 
-	return 0;
+	return EXIT_SUCCESS;
 }

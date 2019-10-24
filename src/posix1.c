@@ -1,9 +1,4 @@
-#define _GNU_SOURCE
-#include <pthread.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <sys/resource.h>
-#include <err.h>
+#include "posix_helper.h"
 
 #define NB_THREADS 3
 
@@ -39,9 +34,9 @@ int main(int argc, char *argv[])
 	pthread_attr_getstacksize(&attr, &stacksize);
 	printf("stacksize :  %ld KB\n", stacksize / 1024);
 
-	pthread_attr_setdetachstate(
-		&attr,
-		PTHREAD_CREATE_JOINABLE); //attente du thread possible
+	// PTHREAD_CREATE_JOINABLE est la valeur par défaut
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_JOINABLE);
+	//attente du thread possible
 
 	int thread_args[NB_THREADS];
 	for (int i = 0; i < NB_THREADS; i++) {
@@ -72,5 +67,5 @@ int main(int argc, char *argv[])
 		       t, (long)status);
 	}
 
-	pthread_exit(NULL);
+	return EXIT_SUCCESS;
 }

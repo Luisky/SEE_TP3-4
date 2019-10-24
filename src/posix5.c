@@ -7,6 +7,23 @@
 #define MQ_NAME "/mq"
 #define MSG_PRIO 1
 
+//TODO : investigate why i got this once :
+/*
+aio_read finished
+aio_read finished
+aio_read finished
+aio_read finished
+pthread_create : id = 0
+pthread_create : id = 1
+pthread_create : id = print
+---
+data->res : 0.000000
+---
+pthread_join : 0 status = 0
+pthread_join : 1 status = 0
+pthread_join : print status = 0
+*/
+
 //super utile : https://www.blaess.fr/christophe/2011/09/17/efficacite-des-ipc-les-files-de-messages-posix/
 struct vec_data {
 	double v1[V_LENGTH];
@@ -64,11 +81,13 @@ void *printer_thread(void *arg)
 			goto p_exit;
 		}
 
+		if (*(double *)data->mq_buf_msg == 0.0) {
+			printf("received value 0\n");
+			goto p_exit;
+		}
 		data->res += *(double *)data->mq_buf_msg;
 
-		// could have written on one line if (++stop == 4) but it's not as readable
-		stop_cond++;
-		if (stop_cond == NB_WORKERS)
+		if (++stop_cond == NB_WORKERS)
 			break;
 	}
 
@@ -93,6 +112,7 @@ int main(int argc, char *argv[])
 
 	struct vec_data vec_data;
 	vec_data.res = 0.0;
+
 	if ((vec_data.mq = mq_open(MQ_NAME, O_RDWR | O_CREAT, 0600, NULL)) ==
 	    -1)
 		perr_exit("mq_open");
@@ -121,7 +141,9 @@ int main(int argc, char *argv[])
 
 	// BEGIN SIGACTION
 	struct sigaction sa;
-	sa.sa_flags	= SA_SIGINFO;
+	sa.sa_flags =
+		SA_SIGINFO |
+		SA_RESTART; // SA_RESTART because of interupted system call : https://unix.stackexchange.com/questions/509375/what-is-interrupted-system-call
 	sa.sa_sigaction = handler;
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGRTMIN, &sa, NULL) == -1)
@@ -154,16 +176,19 @@ int main(int argc, char *argv[])
 	if (aio_read(&cb_vec3) == -1)
 		perr_exit("aio_read");
 
-	aio_suspend(cbs, 4, NULL);
+	//if (aio_suspend(cbs, 4, NULL) == -1)
+	//	perr_exit("aio_suspend");
 
-	int ret;
-	if ((ret = aio_return(&cb_vec0)) == -1)
+	if (lio_listio(LIO_WAIT, (struct aiocb *const *)cbs, 4, NULL))
+		perr_exit("lio_listio");
+
+	if (aio_return(&cb_vec0) == -1)
 		perr_exit("aio_return");
-	if ((ret = aio_return(&cb_vec1)) == -1)
+	if (aio_return(&cb_vec1) == -1)
 		perr_exit("aio_return");
-	if ((ret = aio_return(&cb_vec2)) == -1)
+	if (aio_return(&cb_vec2) == -1)
 		perr_exit("aio_return");
-	if ((ret = aio_return(&cb_vec3)) == -1)
+	if (aio_return(&cb_vec3) == -1)
 		perr_exit("aio_return");
 
 	memcpy((char *)vec_data.v1, (char *)cb_vec0.aio_buf, nb_bytes_aio);
@@ -173,6 +198,26 @@ int main(int argc, char *argv[])
 	memcpy(&((char *)vec_data.v2)[nb_bytes_aio], (char *)cb_vec3.aio_buf,
 	       nb_bytes_aio);
 	// END AIO
+
+	printf("\n--- BEGIN VECTOR ---\n");
+
+	for (int i = 0; i < V_LENGTH; i++) {
+		printf("%lf ", vec_data.v1[i]);
+		if (!(i % 10))
+			printf("\n");
+	}
+
+	printf("\n--- NEXT VECTOR ---\n");
+
+	for (int i = 0; i < V_LENGTH; i++) {
+		printf("%lf ", vec_data.v2[i]);
+		if (!(i % 10))
+			printf("\n");
+		if (i == (V_LENGTH / 2 - 1))
+			printf("\npart two\n");
+	}
+
+	printf("\n--- END VECTOR ---\n");
 
 	// thread_creation
 	for (int i = 0; i < NB_WORKERS; i++) {
@@ -203,5 +248,5 @@ int main(int argc, char *argv[])
 
 	//TODO: free malloc in aiocb_init
 
-	pthread_exit(NULL);
+	return EXIT_SUCCESS;
 }
