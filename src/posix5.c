@@ -7,23 +7,6 @@
 #define MQ_NAME "/mq"
 #define MSG_PRIO 1
 
-//TODO : investigate why i got this once :
-/*
-aio_read finished
-aio_read finished
-aio_read finished
-aio_read finished
-pthread_create : id = 0
-pthread_create : id = 1
-pthread_create : id = print
----
-data->res : 0.000000
----
-pthread_join : 0 status = 0
-pthread_join : 1 status = 0
-pthread_join : print status = 0
-*/
-
 //super utile : https://www.blaess.fr/christophe/2011/09/17/efficacite-des-ipc-les-files-de-messages-posix/
 struct vec_data {
 	double v1[V_LENGTH];
@@ -246,7 +229,10 @@ int main(int argc, char *argv[])
 	mq_close(vec_data.mq);
 	mq_unlink(MQ_NAME);
 
-	//TODO: free malloc in aiocb_init
+	free(cb_vec0.aio_buf);
+	free(cb_vec1.aio_buf);
+	free(cb_vec2.aio_buf);
+	free(cb_vec3.aio_buf);
 
 	return EXIT_SUCCESS;
 }

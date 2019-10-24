@@ -138,7 +138,6 @@ int main(int argc, char **argv)
 	pthread_mutex_destroy(&mut_cond);
 	pthread_cond_destroy(&cond);
 
-	// TODO: cleanup function with those three
 	close(fd);
 	shm_unlink(SHM_NAME);
 	munmap(mm_addr, shm_size);
