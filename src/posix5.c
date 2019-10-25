@@ -163,16 +163,27 @@ int main(int argc, char *argv[])
 	// skeleton taken from : https://www.systutorials.com/docs/linux/man/7-aio/#lbAH
 	int open_reqs = NB_AIO_REQ;
 	while (open_reqs > 0) {
+		//TODO: check if it's open_reqs or NB_AIO_REQ here
 		if (aio_suspend(cbs, open_reqs, NULL) == -1)
 			perr_exit("aio_suspend");
 
 		for (int i = 0; i < NB_AIO_REQ; i++) {
 			if (cbs[i] != NULL) {
-				if (aio_error(cbs[i]) == 0) {
+				switch (aio_error(cbs[i])) {
+				case 0:
 					cbs[i] = NULL;
 					open_reqs--;
-				} else
+					break;
+				case EINPROGRESS:
+					printf("In progress\n");
+					break;
+				case ECANCELED:
+					printf("Canceled\n");
+					break;
+				default:
 					perr_exit("aio_error");
+					break;
+				}
 			}
 		}
 	}
