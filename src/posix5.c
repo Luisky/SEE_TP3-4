@@ -6,6 +6,7 @@
 #define SLICE (V_LENGTH / NB_WORKERS)
 #define MQ_NAME "/mq"
 #define MSG_PRIO 1
+#define NB_AIO_REQ 4
 
 //super utile : https://www.blaess.fr/christophe/2011/09/17/efficacite-des-ipc-les-files-de-messages-posix/
 struct vec_data {
@@ -159,11 +160,22 @@ int main(int argc, char *argv[])
 	if (aio_read(&cb_vec3) == -1)
 		perr_exit("aio_read");
 
-	//if (aio_suspend(cbs, 4, NULL) == -1)
-	//	perr_exit("aio_suspend");
-
-	if (lio_listio(LIO_WAIT, (struct aiocb *const *)cbs, 4, NULL))
-		perr_exit("lio_listio");
+	// skeleton taken from : https://www.systutorials.com/docs/linux/man/7-aio/#lbAH
+	int openReqs = NB_AIO_REQ;
+	/* Loop, monitoring status of I/O requests */
+	while (openReqs > 0) {
+		/* Check the status of each I/O request that is still
+           in progress */
+		for (int i = 0; i < NB_AIO_REQ; i++) {
+			if (cbs[i] != NULL) {
+				//TODO: error handling;
+				if (aio_error(cbs[i]) == 0) {
+					cbs[i] = NULL;
+					openReqs--;
+				}
+			}
+		}
+	}
 
 	if (aio_return(&cb_vec0) == -1)
 		perr_exit("aio_return");
@@ -181,26 +193,6 @@ int main(int argc, char *argv[])
 	memcpy(&((char *)vec_data.v2)[nb_bytes_aio], (char *)cb_vec3.aio_buf,
 	       nb_bytes_aio);
 	// END AIO
-
-	printf("\n--- BEGIN VECTOR ---\n");
-
-	for (int i = 0; i < V_LENGTH; i++) {
-		printf("%lf ", vec_data.v1[i]);
-		if (!(i % 10))
-			printf("\n");
-	}
-
-	printf("\n--- NEXT VECTOR ---\n");
-
-	for (int i = 0; i < V_LENGTH; i++) {
-		printf("%lf ", vec_data.v2[i]);
-		if (!(i % 10))
-			printf("\n");
-		if (i == (V_LENGTH / 2 - 1))
-			printf("\npart two\n");
-	}
-
-	printf("\n--- END VECTOR ---\n");
 
 	// thread_creation
 	for (int i = 0; i < NB_WORKERS; i++) {
@@ -229,10 +221,10 @@ int main(int argc, char *argv[])
 	mq_close(vec_data.mq);
 	mq_unlink(MQ_NAME);
 
-	free(cb_vec0.aio_buf);
-	free(cb_vec1.aio_buf);
-	free(cb_vec2.aio_buf);
-	free(cb_vec3.aio_buf);
+	free((void *)cb_vec0.aio_buf);
+	free((void *)cb_vec1.aio_buf);
+	free((void *)cb_vec2.aio_buf);
+	free((void *)cb_vec3.aio_buf);
 
 	return EXIT_SUCCESS;
 }

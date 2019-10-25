@@ -25,10 +25,10 @@
 #define SYS_WRITE 1
 
 #define perr_exit(msg)                                                         \
-	{                                                                      \
-		perror((msg));                                                 \
+	do {                                                                   \
+		perror(msg);                                                   \
 		exit(EXIT_FAILURE);                                            \
-	}
+	} while (0)
 
 void aiocb_init(struct aiocb *cb, int fd, size_t buf_size, int offset,
 		int info);

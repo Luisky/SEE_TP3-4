@@ -1,6 +1,7 @@
 #include "posix_helper.h"
 
 #define BUF_SIZE 64
+#define NB_AIO_REQ 3
 
 static void handler(int sig, siginfo_t *si, void *uc)
 {
@@ -29,7 +30,7 @@ int main(int argc, char *argv[])
 
 	// setting up signal handling
 	struct sigaction sa;
-	sa.sa_flags	= SA_SIGINFO;
+	sa.sa_flags	= SA_SIGINFO | SA_RESTART;
 	sa.sa_sigaction = handler;
 	sigemptyset(&sa.sa_mask);
 	if (sigaction(SIGRTMIN, &sa, NULL) == -1)
@@ -57,11 +58,22 @@ int main(int argc, char *argv[])
 	if (aio_read(&cbr2) == -1)
 		perr_exit("aio_read");
 
-	//Suspension du processus dans l’attente de la terminaison de la lecture
-	//aio_suspend(cbs, 3, NULL);
-
-	if (lio_listio(LIO_WAIT, (struct aiocb *const *)cbs, 3, NULL))
-		perr_exit("lio_listio");
+	// skeleton taken from : https://www.systutorials.com/docs/linux/man/7-aio/#lbAH
+	int openReqs = NB_AIO_REQ;
+	/* Loop, monitoring status of I/O requests */
+	while (openReqs > 0) {
+		/* Check the status of each I/O request that is still
+           in progress */
+		for (int i = 0; i < NB_AIO_REQ; i++) {
+			if (cbs[i] != NULL) {
+				//TODO: error handling;
+				if (aio_error(cbs[i]) == 0) {
+					cbs[i] = NULL;
+					openReqs--;
+				}
+			}
+		}
+	}
 
 	int ret;
 	if ((ret = aio_return(&cbr1)) == -1)
