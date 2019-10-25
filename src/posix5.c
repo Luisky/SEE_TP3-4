@@ -161,18 +161,18 @@ int main(int argc, char *argv[])
 		perr_exit("aio_read");
 
 	// skeleton taken from : https://www.systutorials.com/docs/linux/man/7-aio/#lbAH
-	int openReqs = NB_AIO_REQ;
-	/* Loop, monitoring status of I/O requests */
-	while (openReqs > 0) {
-		/* Check the status of each I/O request that is still
-           in progress */
+	int open_reqs = NB_AIO_REQ;
+	while (open_reqs > 0) {
+		if (aio_suspend(cbs, open_reqs, NULL) == -1)
+			perr_exit("aio_suspend");
+
 		for (int i = 0; i < NB_AIO_REQ; i++) {
 			if (cbs[i] != NULL) {
-				//TODO: error handling;
 				if (aio_error(cbs[i]) == 0) {
 					cbs[i] = NULL;
-					openReqs--;
-				}
+					open_reqs--;
+				} else
+					perr_exit("aio_error");
 			}
 		}
 	}

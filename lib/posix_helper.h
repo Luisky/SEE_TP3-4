@@ -15,6 +15,7 @@
 #include <signal.h>
 #include <string.h>
 #include <err.h>
+#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 
